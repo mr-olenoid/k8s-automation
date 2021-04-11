@@ -1,0 +1,130 @@
+- name: edit /etc/hosts
+  become: yes
+  blockinfile:
+    path: /etc/hosts
+    block: |
+      {{ item }} {{ hostvars[item]['ansible_facts']['nodename'] }}
+    marker: "# {mark} ANSIBLE MANAGED BLOCK {{ item }}"
+  with_items:  "{{ groups['k8s_masters'] }}"
+
+- name: remove old runtime
+  become: yes
+  apt:
+    pkg: 
+    - cri-o
+    - cri-o-runc
+    state: absent
+      
+- name: enable iptables bridged traffic
+  become: yes
+  copy:
+    dest: /etc/modules-load.d/crio.conf
+    content: |
+      br_netfilter
+      overlay
+
+- name: start iptables bridged traffic
+  become: yes
+  shell: |
+    modprobe br_netfilter
+    modprobe overlay
+- name: disable swap
+  become: yes
+  shell: swapoff -a
+- name: edit fstab
+  become: yes
+  replace:
+    path: /etc/fstab
+    regexp: '^.*swap.img.*'
+    replace: '# '
+    
+- name: allow briging
+  become: yes
+  copy:
+    dest: /etc/sysctl.d/99-kubernetes-cri.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.ipv4.ip_forward                 = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+
+- name: enable bringing
+  become: yes
+  shell: sysctl --system
+
+- name: add cri-o repo
+  become: yes
+  copy:
+    dest: /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
+    content: |
+      deb https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/{{ os_veriosn }}/ /
+- name: add cri-o version repo
+  become: yes
+  copy:
+    dest: /etc/apt/sources.list.d/devel:kubic:libcontainers:stable:cri-o.list
+    content: |
+      deb https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/{{ crio_version }}/{{ os_veriosn }}/ /
+
+- name: add cri-o repo key
+  become: yes
+  shell: "curl -L https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/{{ os_veriosn }}/Release.key | sudo apt-key --keyring /etc/apt/trusted.gpg.d/libcontainers.gpg add -"
+- name: add cri-o version repo key
+  become: yes
+  shell: "curl -L https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable:cri-o:{{ crio_version }}/{{ os_veriosn }}/Release.key | sudo apt-key --keyring /etc/apt/trusted.gpg.d/libcontainers-cri-o.gpg add -"
+
+- name: install cri-o
+  become: yes
+  apt:
+    update_cache: yes
+    pkg:
+    - cri-o
+    - cri-o-runc
+- name: enable and start cri-o
+  become: yes
+  shell: |
+    systemctl enable cri-o.service
+    systemctl start cri-o.service
+- name: install kubeadm dependencies
+  become: yes
+  apt:
+    pkg:
+    - apt-transport-https
+    - ca-certificates
+    - curl
+- name: add k8s repo key
+  become: yes
+  shell: curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+- name: add k8s repo
+  become: yes
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: |
+      deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main
+- name: install kubeadm
+  become: yes
+  apt:
+    update_cache: yes
+    pkg:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: add container repos
+  become: yes
+  blockinfile:
+    path: /etc/crio/crio.conf
+    block: |
+      registries = [
+      "quay.io",
+      "docker.io"
+      ]
+
+- name: add config for cri-o
+  become: yes
+  lineinfile:
+    path: /etc/default/kubelet
+    line: KUBELET_EXTRA_ARGS=--feature-gates='AllAlpha=false,RunAsGroup=true' --container-runtime=remote --cgroup-driver=systemd --container-runtime-endpoint='unix:///var/run/crio/crio.sock' --runtime-request-timeout=5m
+    create: yes
+
+- name: restart sevices
+  become: yes
+  shell: systemctl restart crio kubelet

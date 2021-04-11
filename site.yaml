@@ -1,0 +1,15 @@
+# prepare all masters and workers
+- hosts: all
+  roles:
+    - node-base
+
+# k8s init and join masters
+- hosts: k8s_masters
+  roles:
+    - ha_cluster_node
+    - init_k8s
+
+# k8s join workers
+- hosts: all
+  roles:
+    - join_cluster

@@ -1,0 +1,35 @@
+totem {
+  version: 2
+  cluster_name: ha-k8s-api
+  transport: udpu
+  interface {
+    ringnumber: 0
+    bindnetaddr: {{ ha_k8s_broadcast }}
+    broadcast: yes
+    mcastport: 5405
+  }
+}
+quorum {
+  provider: corosync_votequorum
+}
+nodelist {
+  {% for node in groups['k8s_masters'] %}
+  node {
+    ring0_addr: {{ node }}
+    name: {{ hostvars[node]['ansible_facts']['nodename'] }}
+    nodeid: {{ loop.index }}
+  }
+  {% endfor %}
+}
+
+logging {
+  to_logfile: yes
+  logfile: /var/log/corosync/corosync.log
+  to_syslog: yes
+  timestamp: on
+}
+
+service {
+name: pacemaker
+ver: 1
+}

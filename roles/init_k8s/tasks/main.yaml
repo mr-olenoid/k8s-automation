@@ -1,0 +1,38 @@
+- name: Move virtual ip to first master
+  become: yes
+  run_once: true
+  shell: crm_resource -r virtual_ip --move --node {{ hostvars[play_hosts[0]]['ansible_facts']['nodename'] }}
+  when: 
+    - ha_k8s == "yes"
+    - inventory_hostname == play_hosts[0]
+
+- name: Bootstrap master in cluster configuration
+  become: yes
+  run_once: true
+  shell: kubeadm init --pod-network-cidr=10.244.0.0/16 --control-plane-endpoint={{ ha_k8s_ip }} --upload-certs --apiserver-cert-extra-sans={{ additional_san }} --apiserver-advertise-address {{ play_hosts[0] }}
+  register: init_output
+  when:
+    - ha_k8s == "yes"
+    - inventory_hostname == play_hosts[0]
+
+#- debug: msg="{{ init_output }}"
+# | regex_search('^kubeadm')
+
+- name: Add CNI
+  become: true
+  shell: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml --kubeconfig=/etc/kubernetes/admin.conf
+  when:
+    - inventory_hostname == play_hosts[0]
+
+- name: Slect CNI interface 
+  become: true
+  shell: kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface=eth1 --kubeconfig=/etc/kubernetes/admin.conf
+  when:
+    - inventory_hostname == play_hosts[0]
+
+- name: Bootstrap master in single mode
+  become: yes
+  run_once: true
+  shell: kubeadm init --apiserver-cert-extra-sans={{ additional_san }} --pod-network-cidr=10.244.0.0/16
+  when: ha_k8s != "yes"
+

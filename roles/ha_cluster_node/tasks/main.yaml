@@ -1,0 +1,65 @@
+- name: install
+  become: yes
+  apt:
+    update_cache: yes
+    pkg:
+    - corosync
+    - haveged
+    - pacemaker
+
+- name: generate key
+  become: yes
+  shell: corosync-keygen -s 4096
+  run_once: true
+  when: inventory_hostname == play_hosts[0]
+  
+- name: Waiting for /etc/corosync/authkey file
+  wait_for:
+    path: '/etc/corosync/authkey'
+    timeout: 30
+  notify: restart corosync
+  when: inventory_hostname == play_hosts[0]
+
+- name: Fetching /etc/corosync/authkey
+  become: yes
+  slurp:
+    src: '/etc/corosync/authkey'
+  register: tmp_authkey
+  run_once: true
+  when: inventory_hostname == play_hosts[0]
+
+- name: Synchronizing /etc/corosync/authkey everywhere
+  become: yes
+  copy:
+    content: "{{ tmp_authkey['content'] | b64decode }}"
+    dest: /etc/corosync/authkey
+    mode: 0400
+  when: inventory_hostname != play_hosts[0]
+
+- name: Create config file
+  become: yes
+  template:
+    src: meta/corosync.conf.j2
+    dest: /etc/corosync/corosync.conf
+    owner: root
+
+- name: restart corosync
+  become: yes
+  service:
+    name: corosync
+    state: restarted
+
+- name: disable STONITH 
+  run_once: true
+  become: yes
+  shell: crm -F configure property stonith-enabled=false
+
+- name: add vurtual address
+  run_once: true
+  become: yes
+  shell: crm -F configure primitive virtual_ip ocf:heartbeat:IPaddr2 params ip="{{ ha_k8s_ip }}" cidr_netmask="{{ ha_k8s_cidr }}" nic={{ ha_k8s_int }} op monitor interval="10s" meta migration-threshold="10"
+
+- name: add resource grup
+  run_once: true
+  become: yes
+  shell: crm -F configure group k8s-api virtual_ip
