@@ -26,7 +26,7 @@
 
 - name: Slect CNI interface 
   become: true
-  shell: kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface=eth1 --kubeconfig=/etc/kubernetes/admin.conf
+  shell: kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface={{ calico_interface }} --kubeconfig=/etc/kubernetes/admin.conf
   when:
     - inventory_hostname == play_hosts[0]
 
