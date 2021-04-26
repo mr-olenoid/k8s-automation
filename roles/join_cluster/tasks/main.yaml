@@ -1,7 +1,7 @@
 - name: check if /etc/kubernetes/kubelet.conf exists
   become: yes
   stat: 
-    path: /etc/shorewall/rules
+    path: /etc/kubernetes/kubelet.conf
   register: kublet_state
 
 - name: new certificates for bootstraping
