@@ -1,0 +1,58 @@
+- name: Apply Nginx ingress controller
+  become: yes
+  shell: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.45.0/deploy/static/provider/baremetal/deploy.yaml --kubeconfig=/etc/kubernetes/admin.conf
+  run_once: true
+
+- name: Apply Cert-manager
+  become: yes
+  shell: kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v1.2.0/cert-manager.yaml --kubeconfig=/etc/kubernetes/admin.conf
+  run_once: true
+
+- name: Generate Cert-manager config
+  become: yes
+  template:
+    src: templates/ca-issuer.yaml.j2
+    dest: /root/ca-issuer.yaml
+    owner: root
+    group: root
+    mode: '0600'
+
+  #Add delay for container to start
+- name: Waiting fro container start
+  pause:
+    minutes: 1
+
+- name: Apply Cert-manager config
+  become: yes
+  run_once: true
+  shell: "kubectl apply -f /root/ca-issuer.yaml --kubeconfig=/etc/kubernetes/admin.conf"
+
+- name: Apply k8s dashboard
+  become: yes
+  run_once: true
+  shell: "kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.2.0/aio/deploy/recommended.yaml --kubeconfig=/etc/kubernetes/admin.conf"
+
+- name: Generate k8s ingress
+  become: yes
+  run_once: true
+  template:
+    src: templates/dashboard-ingress.yaml.j2
+    dest: /root/dashboard-ingress.yaml
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Apply k8s ingress
+  become: yes
+  run_once: true
+  shell: "kubectl apply -f /root/dashboard-ingress.yaml --kubeconfig=/etc/kubernetes/admin.conf"
+
+- name: Remove file /root/ca-issuer.yaml
+  become: yes
+  run_once: true
+  file:
+    path: /root/ca-issuer.yaml
+    state: absent
+
+# Add dashboard user and prin ingress ports
+#kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

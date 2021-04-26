@@ -34,32 +34,64 @@
     content: "{{ tmp_authkey['content'] | b64decode }}"
     dest: /etc/corosync/authkey
     mode: 0400
-  when: inventory_hostname != play_hosts[0]
+  when: 
+    - inventory_hostname != play_hosts[0]
+    - ha_k8s == "yes"
 
 - name: Create config file
   become: yes
   template:
-    src: meta/corosync.conf.j2
+    src: templates/corosync.conf.j2
     dest: /etc/corosync/corosync.conf
     owner: root
+  when: ha_k8s == "yes"
 
 - name: restart corosync
   become: yes
   service:
     name: corosync
     state: restarted
+  when: ha_k8s == "yes"
+
+- name: Wait for service 'corosync' to be running
+  service:
+    name: corosync 
+    state: started
+  register: corosync_details
+  until: corosync_details.status.ActiveState == "active"
+  retries: 15
+  delay: 20
 
 - name: disable STONITH 
   run_once: true
   become: yes
   shell: crm -F configure property stonith-enabled=false
+  when: ha_k8s == "yes"
+
+- name: check if cluster virtual ip exists
+  run_once: true
+  become: yes
+  shell: crm status
+  register: crm_status_virtual_ip
 
 - name: add vurtual address
   run_once: true
   become: yes
   shell: crm -F configure primitive virtual_ip ocf:heartbeat:IPaddr2 params ip="{{ ha_k8s_ip }}" cidr_netmask="{{ ha_k8s_cidr }}" nic={{ ha_k8s_int }} op monitor interval="10s" meta migration-threshold="10"
+  when: 
+  - ha_k8s == "yes"
+  - crm_status_virtual_ip.stdout.find("virtual_ip") == -1
+
+- name: check if cluster group exists exists
+  run_once: true
+  become: yes
+  shell: crm status
+  register: crm_status_group
 
 - name: add resource grup
   run_once: true
   become: yes
   shell: crm -F configure group k8s-api virtual_ip
+  when: 
+  - ha_k8s == "yes"
+  - crm_status_group.stdout.find("k8s-api") == -1

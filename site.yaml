@@ -6,10 +6,15 @@
 # k8s init and join masters
 - hosts: k8s_masters
   roles:
-    - ha_cluster_node
-    - init_k8s
+     - ha_cluster_node
+     - init_k8s
 
 # k8s join workers
 - hosts: all
   roles:
     - join_cluster
+
+# k8s dashboard, ingress
+- hosts: k8s_masters[0]
+  roles:
+    - addition_steps

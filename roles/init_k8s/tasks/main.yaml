@@ -1,22 +1,37 @@
+- name: check if /etc/kubernetes/kubelet.conf exists
+  become: yes
+  stat: 
+    path: /etc/shorewall/rules
+  register: kublet_state
+
 - name: Move virtual ip to first master
   become: yes
   run_once: true
-  shell: crm_resource -r virtual_ip --move --node {{ hostvars[play_hosts[0]]['ansible_facts']['nodename'] }}
+  shell: crm_resource -r virtual_ip --move --node {{ hostvars[play_hosts[0]]['ansible_facts']['nodename'] }} --force
   when: 
     - ha_k8s == "yes"
     - inventory_hostname == play_hosts[0]
+    - kublet_state.stat.exists == false
 
 - name: Bootstrap master in cluster configuration
   become: yes
   run_once: true
-  shell: kubeadm init --pod-network-cidr=10.244.0.0/16 --control-plane-endpoint={{ ha_k8s_ip }} --upload-certs --apiserver-cert-extra-sans={{ additional_san }} --apiserver-advertise-address {{ play_hosts[0] }}
+  shell: kubeadm init --pod-network-cidr=10.244.0.0/16 --service-cidr 10.112.0.0/12 --control-plane-endpoint={{ ha_k8s_ip }} --upload-certs --apiserver-cert-extra-sans={{ additional_san }} --apiserver-advertise-address {{ play_hosts[0] }} {% if container_runtime == "crio" %} --config /root/k8s.yaml {% endif %}
   register: init_output
   when:
     - ha_k8s == "yes"
     - inventory_hostname == play_hosts[0]
+    - kublet_state.stat.exists == false
 
-#- debug: msg="{{ init_output }}"
-# | regex_search('^kubeadm')
+- debug: msg={{ init_output.stdout[-7:-1] }}
+
+- name: Bootstrap master in single mode
+  become: yes
+  run_once: true
+  shell: kubeadm init --apiserver-cert-extra-sans={{ additional_san }} --pod-network-cidr=10.244.0.0/16
+  when: 
+    - ha_k8s != "yes"
+    - kublet_state.stat.exists == false
 
 - name: Add CNI
   become: true
@@ -24,15 +39,8 @@
   when:
     - inventory_hostname == play_hosts[0]
 
-- name: Slect CNI interface 
+- name: Select CNI interface 
   become: true
-  shell: kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface={{ calico_interface }} --kubeconfig=/etc/kubernetes/admin.conf
+  shell: kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=interface={{ calico_interface }} --kubeconfig=/etc/kubernetes/admin.conf {% if container_runtime == "crio" %} --config /root/k8s.yaml {% endif %}
   when:
     - inventory_hostname == play_hosts[0]
-
-- name: Bootstrap master in single mode
-  become: yes
-  run_once: true
-  shell: kubeadm init --apiserver-cert-extra-sans={{ additional_san }} --pod-network-cidr=10.244.0.0/16
-  when: ha_k8s != "yes"
-

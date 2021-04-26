@@ -1,3 +1,9 @@
+- name: check if /etc/kubernetes/kubelet.conf exists
+  become: yes
+  stat: 
+    path: /etc/shorewall/rules
+  register: kublet_state
+
 - name: new certificates for bootstraping
   become: yes
   shell: kubeadm init phase upload-certs --upload-certs --kubeconfig=/etc/kubernetes/admin.conf
@@ -29,6 +35,7 @@
   when:
     - inventory_hostname in groups['k8s_masters']
     - inventory_hostname != play_hosts[0]
+    - kublet_state.stat.exists == false
 
 - name: Generate join command for workers
   become: yes
@@ -44,3 +51,12 @@
   shell: "{{ join_worker_command.stdout }}"
   when:
     - inventory_hostname in groups['k8s_workers']
+    - kublet_state.stat.exists == false
+
+- name: taint masters to run pods
+  become: yes
+  shell: kubectl taint nodes --all node-role.kubernetes.io/master-
+  run_once: true
+  when:
+    - inventory_hostname in groups['k8s_masters']
+    - inventory_hostname == play_hosts[0]

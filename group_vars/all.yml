@@ -1,18 +1,26 @@
 os_veriosn: xUbuntu_20.04
 crio_version: "1.20"
-become_method: sudo
+kublet_version: "1.21.0-00"
 
-additional_san: "kube.in.ua,10.100.10.10"
-calico_interface: "eth1"
+container_runtime: docker # crio docker
+docker_dist_name: focal
+
+additional_san: "kube.in.ua"
+calico_interface: "enp88s0"
 
 # deploy kubernetes in cluster config
 ha_k8s: "yes"
-ha_k8s_ip: "10.100.10.10"
+ha_k8s_ip: "192.168.88.80"
 ha_k8s_cidr: "24"
-ha_k8s_int: "eth1"
-ha_k8s_broadcast: "10.100.10.255"
+ha_k8s_int: "enp88s0"
+ha_k8s_broadcast: "192.168.88.255"
 # Test part for vagrant
 ansible_connection: ssh
+become_method: sudo
 ansible_user: vagrant
-ansible_ssh_pass: vagrant
+ansible_ssh_pass: "vagrant"
 ansible_sudo_pass: "vagrant"
+# certificate issuer settings
+cloudflare_api_token: "secret-key"
+admin_email: "mail"
+domain_names: ["kube.in.ua", "*.kube.in.ua"]

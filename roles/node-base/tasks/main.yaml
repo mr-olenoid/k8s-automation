@@ -5,14 +5,26 @@
     block: |
       {{ item }} {{ hostvars[item]['ansible_facts']['nodename'] }}
     marker: "# {mark} ANSIBLE MANAGED BLOCK {{ item }}"
-  with_items:  "{{ groups['k8s_masters'] }}"
+  with_items:  "{{ groups['all'] }}"
 
-- name: remove old runtime
+- name: remove old runtime (crio)
   become: yes
   apt:
     pkg: 
     - cri-o
     - cri-o-runc
+    state: absent
+
+
+- name: remove old runtime (docker)
+  become: yes
+  apt:
+    pkg: 
+    - docker
+    - docker-engine
+    - docker.io
+    - containerd
+    - runc
     state: absent
       
 - name: enable iptables bridged traffic
@@ -35,8 +47,8 @@
   become: yes
   replace:
     path: /etc/fstab
-    regexp: '^.*swap.img.*'
-    replace: '# '
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
     
 - name: allow briging
   become: yes
@@ -57,19 +69,25 @@
     dest: /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
     content: |
       deb https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/{{ os_veriosn }}/ /
+  when: container_runtime == "crio"
+
 - name: add cri-o version repo
   become: yes
   copy:
     dest: /etc/apt/sources.list.d/devel:kubic:libcontainers:stable:cri-o.list
     content: |
       deb https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/{{ crio_version }}/{{ os_veriosn }}/ /
+  when: container_runtime == "crio"
 
 - name: add cri-o repo key
   become: yes
   shell: "curl -L https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/{{ os_veriosn }}/Release.key | sudo apt-key --keyring /etc/apt/trusted.gpg.d/libcontainers.gpg add -"
+  when: container_runtime == "crio"
+
 - name: add cri-o version repo key
   become: yes
   shell: "curl -L https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable:cri-o:{{ crio_version }}/{{ os_veriosn }}/Release.key | sudo apt-key --keyring /etc/apt/trusted.gpg.d/libcontainers-cri-o.gpg add -"
+  when: container_runtime == "crio"
 
 - name: install cri-o
   become: yes
@@ -78,11 +96,51 @@
     pkg:
     - cri-o
     - cri-o-runc
+  when: container_runtime == "crio"
+
 - name: enable and start cri-o
   become: yes
   shell: |
     systemctl enable cri-o.service
     systemctl start cri-o.service
+  when: container_runtime == "crio"
+
+- name: install Docker prerequisites
+  become: yes
+  apt:
+    update_cache: yes
+    pkg:
+    - apt-transport-https
+    - ca-certificates
+    - curl
+    - gnupg
+  when: container_runtime == "docker"
+
+- name: Add Docker key
+  become: yes
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+    keyring: /usr/share/keyrings/docker-archive-keyring.gpg
+
+- name: add docker repo
+  become: yes
+  copy:
+    dest: /etc/apt/sources.list.d/docker.list
+    content: |
+      deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu {{ docker_dist_name }} stable
+  when: container_runtime == "docker"
+
+- name: install Docker
+  become: yes
+  apt:
+    update_cache: yes
+    pkg:
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+  when: container_runtime == "docker"
+    
 - name: install kubeadm dependencies
   become: yes
   apt:
@@ -90,23 +148,26 @@
     - apt-transport-https
     - ca-certificates
     - curl
+
 - name: add k8s repo key
   become: yes
   shell: curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+
 - name: add k8s repo
   become: yes
   copy:
     dest: /etc/apt/sources.list.d/kubernetes.list
     content: |
       deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main
+
 - name: install kubeadm
   become: yes
   apt:
     update_cache: yes
     pkg:
-    - kubelet
-    - kubeadm
-    - kubectl
+    - kubelet={{kublet_version}}
+    - kubeadm={{kublet_version}}
+    - kubectl={{kublet_version}}
 
 - name: add container repos
   become: yes
@@ -117,14 +178,37 @@
       "quay.io",
       "docker.io"
       ]
+  when: container_runtime == "crio"
 
 - name: add config for cri-o
   become: yes
   lineinfile:
     path: /etc/default/kubelet
-    line: KUBELET_EXTRA_ARGS=--feature-gates='AllAlpha=false,RunAsGroup=true' --container-runtime=remote --cgroup-driver=systemd --container-runtime-endpoint='unix:///var/run/crio/crio.sock' --runtime-request-timeout=5m
+    #line: KUBELET_EXTRA_ARGS=--feature-gates='AllAlpha=false,RunAsGroup=true' --container-runtime=remote --cgroup-driver=systemd --container-runtime-endpoint='unix:///var/run/crio/crio.sock' --runtime-request-timeout=5m
+    line: KUBELET_EXTRA_ARGS=--container-runtime=remote --container-runtime-endpoint='unix:///var/run/crio/crio.sock'
     create: yes
+  when: container_runtime == "crio"
 
-- name: restart sevices
+- name: Create config file
   become: yes
-  shell: systemctl restart crio kubelet
+  copy:
+    dest: /root/k8s.yaml
+    content: |
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    kind: KubeletConfiguration
+    cgroupDriver: systemd
+    featureGates:
+      RunAsGroup: true
+      AllAlpha: false
+    runtimeRequestTimeout: 5m
+  when: container_runtime == "crio"
+
+
+- name: restart crio
+  become: yes
+  shell: systemctl restart crio
+  when: container_runtime == "crio"
+
+- name: restart sevices kublet
+  become: yes
+  shell: systemctl restart kubelet
